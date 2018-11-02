@@ -16,7 +16,7 @@ import tf
 rospy.init_node('path_follower_node', anonymous=True)
 rate = rospy.Rate(50)
 
-show_animation = False
+show_animation = True
 
 class State:
     def __init__(self, x=0.0, y=0.0, yaw=0.0):
@@ -96,12 +96,12 @@ class PathFollower():
         # motor controller commands
         if alpha > 3.141/1.5:
             lin_vel = 0
-            ang_vel = -0.8
+            ang_vel = -1.2
         elif alpha < -3.141/1.5:
             lin_vel = 0
-            ang_vel = 0.8
+            ang_vel = 1.2
         else:
-            lin_vel = 0.08
+            lin_vel = 0.08 - abs(alpha)*0.08/(3.141/1.5)
 
         return lin_vel, ang_vel
 
