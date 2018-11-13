@@ -26,10 +26,16 @@ class motor_controller():
         self.wheel_radius = 0.0485
 
         # PID parameters
-        self.Kp_left = 6.0
-        self.Kp_right = 7.0
-        self.Ki_left = 4.0
-        self.Ki_right = 4.0
+        self.Kp_left = 15.0
+        self.Kp_right = 17.0
+        self.Ki_left = 15.0
+        self.Ki_right = 15.0
+        '''
+        self.Kp_left = 10.0
+        self.Kp_right = 12.0
+        self.Ki_left = 9.0
+        self.Ki_right = 9.0
+        '''
         self.Kd_left = 0.0
         self.Kd_right = 0.0
 
