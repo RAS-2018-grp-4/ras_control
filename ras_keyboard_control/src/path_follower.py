@@ -14,6 +14,7 @@ import itertools
 import tf
 import time
 from std_msgs.msg import Float32MultiArray
+import sensor_msgs.msg
 
 rospy.init_node('path_follower_node', anonymous=True)
 rate = rospy.Rate(20)
@@ -48,8 +49,16 @@ class PathFollower():
         # internal states
         self.initalize_pose = False # flag that the robot should completely rotate before start moving
 
-        self.distance_treshold = 0.3
-        self.distance_measurement = [100, 100]
+        self.d_treshold_sides = 0.2
+        self.d_treshold_frontsides = 0.35
+        self.d_treshold_front = 0.2
+        self.d_treshold_back = 0.12
+
+        self.warning_left = False
+        self.warning_right = False
+        self.warning_front = False
+        self.warning_frontsides = False
+        self.warning_back = False
 
     #####################################
     #             Callbacks             #
@@ -101,6 +110,60 @@ class PathFollower():
         self.distance_measurement = msg.data
         #print(self.distance_measurement)
 
+    def feedback_laser(self,scan):
+        # initalize distance sensor value
+        d_left = []
+        d_frontleft = []
+        d_front = []
+        d_frontright = []
+        d_right = []
+        d_back = []
+
+
+        count = (int)(scan.scan_time / scan.time_increment)
+        for i in range(0, count): 
+            # publish the distance sensor                         
+            if i >= 90 and i < 155: 
+                d_right.append(scan.ranges[i])
+            elif i >= 155 and i < 175: 
+                d_frontright.append(scan.ranges[i])
+            elif i >= 175 and i < 185: 
+                d_front.append(scan.ranges[i])
+            elif i >= 185 and i < 205: 
+                d_frontleft.append(scan.ranges[i])
+            elif i >= 205 and i <= 270: 
+                d_left.append(scan.ranges[i])
+            elif i >= 350 or i <= 10: 
+                d_back.append(scan.ranges[i])
+
+
+        self.warning_left = False
+        self.warning_right = False
+        self.warning_front = False
+        self.warning_frontleft = False
+        self.warning_frontright = False
+        self.warning_back = False
+
+        if any([d < self.d_treshold_sides for d in d_right]):
+            self.warning_right = True
+            print("CLOSE TO WALL: right")
+        if any([d < self.d_treshold_sides for d in d_left]):
+            self.warning_left = True
+            print("CLOSE TO WALL: left")
+        if any([d < self.d_treshold_frontsides for d in d_frontright]):
+            self.warning_frontright = True
+            print("CLOSE TO WALL: frontright")
+        if any([d < self.d_treshold_frontsides for d in d_frontleft]):
+            self.warning_frontleft = True
+            print("CLOSE TO WALL: frontleft")
+        if any([d < self.d_treshold_front for d in d_front]):
+            self.warning_front = True
+            print("CLOSE TO WALL: front")
+        if any([d < self.d_treshold_front for d in d_back]):
+            self.warning_back = True
+            print("CLOSE TO WALL: back")
+
+
 
     #####################################
     #             Publishers            #
@@ -128,46 +191,44 @@ class PathFollower():
         ang_vel = ang_vel_temp
 
         # motor controller commands
-        #print(alpha)
-        if self.initalize_pose == True:    
-            # getting into inital pose (pure rotation)  
-            if (alpha > math.pi/12.0 and alpha < math.pi) or (alpha < -math.pi and alpha > -math.pi*23.0/12.0):
-                lin_vel = 0
-                ang_vel = 0.5
-                print("getting into inital pose: turn LEFT")
-            elif (alpha < -math.pi/12.0 and alpha > -math.pi) or (alpha < math.pi*23.0/12.0 and alpha > math.pi):
-                lin_vel = 0
-                ang_vel = -0.5
-                print("getting into inital pose: turn RIGHT")
+        if self.initalize_pose == True:             
+            # local planner depending on laser scans
+            if self.warning_front:
+                lin_vel = -0.04
+                ang_vel = 0
+                print("emergency steering: REVERSE")
+            elif self.warning_back:
+                lin_vel = 0.04
+                ang_vel = 0
+                print("emergency steering: GO AHEAD")
             else:
-                self.initalize_pose = False
-                # stop the motors, and wait
-                self.send_velocity(0, 0)
-                time.sleep(0.3)
+                # getting into inital pose (pure rotation)  
+                if (alpha > math.pi/12.0 and alpha < math.pi) or (alpha < -math.pi and alpha > -math.pi*23.0/12.0):
+                    lin_vel = 0
+                    ang_vel = 0.5
+                    print("getting into inital pose: turn LEFT")
+                elif (alpha < -math.pi/12.0 and alpha > -math.pi) or (alpha < math.pi*23.0/12.0 and alpha > math.pi):
+                    lin_vel = 0
+                    ang_vel = -0.5
+                    print("getting into inital pose: turn RIGHT")
+                else:
+                    self.initalize_pose = False
+                    # stop the motors, and wait
+                    self.send_velocity(0, 0)
+                    time.sleep(0.3)
                 
         elif self.initalize_pose == False:
             # normal operation
-            lin_vel = 0.04   
+            lin_vel = 0.04  
+
+            # local planner depending on laser scans
+            if self.warning_left or self.warning_frontleft:
+                ang_vel = ang_vel - 0.4 
+                print("emergency steering: RIGHT")
+            if self.warning_right or self.warning_frontright:
+                ang_vel = ang_vel + 0.4
+                print("emergency steering: LEFT")
         
-        # local planner depending on laser scans
-        left_scan_dist = self.distance_measurement[0]
-        tangent_scan_dist = self.distance_measurement[1]
-        right_scan_dist = self.distance_measurement[2]
-
-        if left_scan_dist < self.distance_treshold:
-            ang_vel = ang_vel - 0.9 
-            print("emergency steering: RIGHT")
-
-        if right_scan_dist < self.distance_treshold:
-            ang_vel = ang_vel + 0.9
-            print("emergency steering: LEFT")
-
-        if tangent_scan_dist < 0.25:
-            lin_vel = -0.03
-            print("emergency steering: REVERSE")
-
-        #print("lin_vel", lin_vel)
-        #print("ang_vel", ang_vel)    
         return lin_vel, ang_vel
 
     def pure_pursuit_control(self, state, path_x, path_y, t_ind_prev):
@@ -309,6 +370,7 @@ if __name__ == '__main__':
     # subscribers
     #rospy.Subscriber("/robot_odom", Odometry, pf.odomCallback)
     rospy.Subscriber("/robot_filter", Odometry, pf.filterCallback)
+    rospy.Subscriber('/scan', sensor_msgs.msg.LaserScan, pf.feedback_laser)
 
     rospy.Subscriber("/aPath", Path, pf.pathCallback)
     rospy.Subscriber("/path_follower_flag", String, pf.flagCallback)
