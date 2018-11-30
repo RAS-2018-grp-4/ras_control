@@ -91,7 +91,7 @@ class ObjectApproacher():
                 # send the velocity commands
                 lin_vel = 0.045
                 ang_vel = self.delta_x * 0.005
-                if abs(self.delta_x):
+                if abs(self.delta_x) > 100:
                     lin_vel = 0
                 
                 self.send_velocity(lin_vel, ang_vel)
