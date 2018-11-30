@@ -262,7 +262,7 @@ class PathFollower():
                         if min_dist < self.d_treshold_frontsides - 0.07:
                             ang_vel = ang_vel + 0.3          
                             print("emergency steering: LEFT (EXTRA!!!!!!!!!)")
-                            
+
                 '''
                 if self.warning_frontleft and self.warning_frontright:
                     # if wall in front, stop and increase look ahead (steer along the path)
@@ -395,7 +395,6 @@ class PathFollower():
                # print("PATH FOLLOWING DONE")
 
                 # path follower done
-                self.send_velocity(0, 0) # stop robot
                 time.sleep(2)
 
                 # send a flag to the state machine
