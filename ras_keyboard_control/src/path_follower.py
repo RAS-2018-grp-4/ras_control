@@ -30,7 +30,7 @@ class State:
 
 class PathFollower():
     def __init__(self):
-        self.D = 0.15  # look-ahead distance
+        self.D = 0.12  # look-ahead distance
         self.L = 0.21  # robot base length
 
         # current robot position (updated by odom subscriber continously)
@@ -41,7 +41,7 @@ class PathFollower():
         # parameters
         self.follow_new_path = False
         self.abort_path_following = False
-
+        self.is_close = False
         # current path
         self.path_x = []
         self.path_y = []
@@ -49,16 +49,28 @@ class PathFollower():
         # internal states
         self.initalize_pose = False # flag that the robot should completely rotate before start moving
 
-        self.d_treshold_sides = 0.2
-        self.d_treshold_frontsides = 0.35
-        self.d_treshold_front = 0.2
-        self.d_treshold_back = 0.12
+        self.d_treshold_sides = 0.20
+        self.d_treshold_frontsides = 0.28
+        self.d_treshold_front = 0.16
+        self.d_treshold_back = 0.09
 
         self.warning_left = False
         self.warning_right = False
         self.warning_front = False
         self.warning_frontsides = False
         self.warning_back = False
+        
+        #ADD 28 NOV
+        self.warning_frontleft = False
+        self.warning_frontright = False
+
+        # initalize distance sensor value
+        self.d_left = []
+        self.d_frontleft = []
+        self.d_front = []
+        self.d_frontright = []
+        self.d_right = []
+        self.d_back = []
 
     #####################################
     #             Callbacks             #
@@ -90,21 +102,23 @@ class PathFollower():
         for i in range(len(path)):
             #self.path_x.append(path[i].pose.position.y -0.2)
             #self.path_y.append(-path[i].pose.position.x + 0.2)
-            self.path_x.append(path[i].pose.position.x -0.2)
-            self.path_y.append(path[i].pose.position.y -0.2)
+            self.path_x.append(path[i].pose.position.x)
+            self.path_y.append(path[i].pose.position.y)
 
         # set flags to start executing 
         self.follow_new_path = True
         self.abort_path_following = False
         self.initalize_pose = True
-
+        self.is_close = False
         # reset look-ahead
         self.D = 0.15
 
     def flagCallback(self, msg):
         flag = msg.data
+        print("received somethigs")
         if flag == "STOP":
             self.abort_path_following = True
+            print("-----received STOP command-----")
 
     def distancesensorCallback(self, msg):
         self.distance_measurement = msg.data
@@ -112,29 +126,29 @@ class PathFollower():
 
     def feedback_laser(self,scan):
         # initalize distance sensor value
-        d_left = []
-        d_frontleft = []
-        d_front = []
-        d_frontright = []
-        d_right = []
-        d_back = []
+        self.d_left = []
+        self.d_frontleft = []
+        self.d_front = []
+        self.d_frontright = []
+        self.d_right = []
+        self.d_back = []
 
 
         count = (int)(scan.scan_time / scan.time_increment)
         for i in range(0, count): 
             # publish the distance sensor                         
-            if i >= 90 and i < 155: 
-                d_right.append(scan.ranges[i])
-            elif i >= 155 and i < 175: 
-                d_frontright.append(scan.ranges[i])
-            elif i >= 175 and i < 185: 
-                d_front.append(scan.ranges[i])
-            elif i >= 185 and i < 205: 
-                d_frontleft.append(scan.ranges[i])
-            elif i >= 205 and i <= 270: 
-                d_left.append(scan.ranges[i])
-            elif i >= 350 or i <= 10: 
-                d_back.append(scan.ranges[i])
+            if i >= 80 and i < 150: 
+                self.d_right.append(scan.ranges[i])
+            if i >= 130 and i < 175: 
+                self.d_frontright.append(scan.ranges[i])
+            if i >= 155 and i < 205: 
+                self.d_front.append(scan.ranges[i])
+            if i >= 185 and i < 230: 
+                self.d_frontleft.append(scan.ranges[i])
+            if i >= 210 and i <= 280: 
+                self.d_left.append(scan.ranges[i])
+            if i >= 335 or i <= 25: 
+                self.d_back.append(scan.ranges[i])
 
 
         self.warning_left = False
@@ -144,22 +158,22 @@ class PathFollower():
         self.warning_frontright = False
         self.warning_back = False
 
-        if any([d < self.d_treshold_sides for d in d_right]):
+        if any([d < self.d_treshold_sides for d in self.d_right]):
             self.warning_right = True
             print("CLOSE TO WALL: right")
-        if any([d < self.d_treshold_sides for d in d_left]):
+        if any([d < self.d_treshold_sides for d in self.d_left]):
             self.warning_left = True
             print("CLOSE TO WALL: left")
-        if any([d < self.d_treshold_frontsides for d in d_frontright]):
+        if any([d < self.d_treshold_frontsides for d in self.d_frontright]):
             self.warning_frontright = True
             print("CLOSE TO WALL: frontright")
-        if any([d < self.d_treshold_frontsides for d in d_frontleft]):
+        if any([d < self.d_treshold_frontsides for d in self.d_frontleft]):
             self.warning_frontleft = True
             print("CLOSE TO WALL: frontleft")
-        if any([d < self.d_treshold_front for d in d_front]):
+        if any([d < self.d_treshold_front for d in self.d_front]):
             self.warning_front = True
             print("CLOSE TO WALL: front")
-        if any([d < self.d_treshold_front for d in d_back]):
+        if any([d < self.d_treshold_front for d in self.d_back]):
             self.warning_back = True
             print("CLOSE TO WALL: back")
 
@@ -186,7 +200,7 @@ class PathFollower():
     def dist_to_goal(self, state):
         return math.sqrt((state.x - self.path_x[-1])**2 + (state.y - self.path_y[-1])**2) 
 
-    def override_velocities(self, ang_vel_temp, alpha):
+    def override_velocities(self, ang_vel_temp, alpha, state):
         lin_vel = 0
         ang_vel = ang_vel_temp
 
@@ -196,11 +210,11 @@ class PathFollower():
             if self.warning_front:
                 lin_vel = -0.04
                 ang_vel = 0
-                print("emergency steering: REVERSE")
+                print("getting into inital pose: REVERSE")
             elif self.warning_back:
                 lin_vel = 0.04
                 ang_vel = 0
-                print("emergency steering: GO AHEAD")
+                print("getting into inital pose: GO AHEAD")
             else:
                 # getting into inital pose (pure rotation)  
                 if (alpha > math.pi/12.0 and alpha < math.pi) or (alpha < -math.pi and alpha > -math.pi*23.0/12.0):
@@ -219,15 +233,47 @@ class PathFollower():
                 
         elif self.initalize_pose == False:
             # normal operation
-            lin_vel = 0.04  
+            lin_vel = 0.045
+            if self.is_close:
+                lin_vel = 0.025
+                ang_vel = ang_vel/2
 
-            # local planner depending on laser scans
-            if self.warning_left or self.warning_frontleft:
-                ang_vel = ang_vel - 0.4 
-                print("emergency steering: RIGHT")
-            if self.warning_right or self.warning_frontright:
-                ang_vel = ang_vel + 0.4
-                print("emergency steering: LEFT")
+            if self.dist_to_goal(state) >= self.D*2:
+
+                # local planner depending on laser scans
+                if self.warning_left or self.warning_frontleft:    
+                    lin_vel = 0.035  
+                    ang_vel = ang_vel - 0.3          
+                    print("emergency steering: RIGHT")
+                    
+                    if len(self.d_frontleft) >= 1:
+                        min_dist = min(self.d_frontleft)
+                        if min_dist < self.d_treshold_frontsides - 0.07:
+                            ang_vel = ang_vel - 0.3          
+                            print("emergency steering: RIGHT (EXTRA!!!!!!!!!)")
+
+                if self.warning_right or self.warning_frontright:
+                    lin_vel = 0.035
+                    ang_vel = ang_vel + 0.3
+                    print("emergency steering: LEFT")
+
+                    if len(self.d_frontright) >= 1:
+                        min_dist = min(self.d_frontright)
+                        if min_dist < self.d_treshold_frontsides - 0.07:
+                            ang_vel = ang_vel + 0.3          
+                            print("emergency steering: LEFT (EXTRA!!!!!!!!!)")
+                            
+                '''
+                if self.warning_frontleft and self.warning_frontright:
+                    # if wall in front, stop and increase look ahead (steer along the path)
+                    lin_vel = 0
+                    self.D = 0.4
+                
+
+                if self.warning_front:
+                    lin_vel = -0.05
+                    print("emergency steering: REVERSE")
+                '''
         
         return lin_vel, ang_vel
 
@@ -308,8 +354,10 @@ class PathFollower():
                         break
 
                     # when close, reduce the look-ahead distance
+                    self.D = 0.15
                     if self.dist_to_goal(state) < self.D*2:
                         self.D = 0.15/2
+                        self.is_close = True
                         #print("close to target: reduce look-ahead")
 
                     # default command: stay still
@@ -319,9 +367,10 @@ class PathFollower():
                     # calculate appropriate steering
                     ang_vel, target_ind, alpha = self.pure_pursuit_control(state, self.path_x, self.path_y, target_ind)
 
-                    # override the velocities if needed (e.g. in a sharp turn)
-                    lin_vel, ang_vel = self.override_velocities(ang_vel, alpha)
+                    # overang_veleeded (e.g. in a sharp turn)
+                    lin_vel, ang_vel = self.override_velocities(ang_vel, alpha, state)
 
+                    print(ang_vel*0.3)
                     # send the velocity commands
                     self.send_velocity(lin_vel, ang_vel*0.3)
 
