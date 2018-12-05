@@ -30,7 +30,7 @@ class State:
 
 class PathFollower():
     def __init__(self):
-        self.D = 0.12  # look-ahead distance
+        self.D = 0.13  # look-ahead distance
         self.L = 0.21  # robot base length
 
         # current robot position (updated by odom subscriber continously)
@@ -42,6 +42,7 @@ class PathFollower():
         self.follow_new_path = False
         self.abort_path_following = False
         self.is_close = False
+
         # current path
         self.path_x = []
         self.path_y = []
@@ -71,6 +72,18 @@ class PathFollower():
         self.d_frontright = []
         self.d_right = []
         self.d_back = []
+
+        self.speed_normal = 0.05
+        self.speed_delta = 0.006
+
+        self.round = 1
+        if rospy.get_param("/round") == 2:
+            print("round 2: allow more speed")
+            self.speed_normal = 0.09
+            self.speed_delta = 0.011
+            self.round = 2
+
+        self.send_flag_OK = False
 
     #####################################
     #             Callbacks             #
@@ -110,8 +123,9 @@ class PathFollower():
         self.abort_path_following = False
         self.initalize_pose = True
         self.is_close = False
+        self.send_flag_OK = True
         # reset look-ahead
-        self.D = 0.15
+        self.D = 0.12
 
     def flagCallback(self, msg):
         flag = msg.data
@@ -193,6 +207,10 @@ class PathFollower():
         flag.data = flag_message
         pub_flag_done.publish(flag)
 
+    def send_flag_close_to_obj(self, flag_message):
+        flag = std_msgs.msg.String()
+        flag.data = flag_message
+        pub_flag_path_follower.publish(flag)
     #####################################
     #             Alogrithm             #
     #####################################
@@ -219,49 +237,66 @@ class PathFollower():
                 # getting into inital pose (pure rotation)  
                 if (alpha > math.pi/12.0 and alpha < math.pi) or (alpha < -math.pi and alpha > -math.pi*23.0/12.0):
                     lin_vel = 0
-                    ang_vel = 0.5
+                    ang_vel = 1.5
                     print("getting into inital pose: turn LEFT")
                 elif (alpha < -math.pi/12.0 and alpha > -math.pi) or (alpha < math.pi*23.0/12.0 and alpha > math.pi):
                     lin_vel = 0
-                    ang_vel = -0.5
+                    ang_vel = -1.5
                     print("getting into inital pose: turn RIGHT")
                 else:
                     self.initalize_pose = False
                     # stop the motors, and wait
                     self.send_velocity(0, 0)
-                    time.sleep(0.3)
+                    time.sleep(0.7)
                 
         elif self.initalize_pose == False:
             # normal operation
-            lin_vel = 0.045
+            lin_vel = self.speed_normal
             if self.is_close:
-                lin_vel = 0.025
-                ang_vel = ang_vel/2
+                if self.round == 1:
+                    lin_vel = self.speed_normal*0.6
+                    ang_vel = ang_vel*0.7
+                if self.round == 2:
+                    lin_vel = 0.015
+                    ang_vel = ang_vel/2
 
-            if self.dist_to_goal(state) >= self.D*2:
+
+            # slow down in corners   
+            if self.dist_to_goal(state) >= 0.35:              
+                print(ang_vel)
+                if abs(ang_vel) >= 0.3:
+                    lin_vel = self.speed_normal - self.speed_delta
+                if abs(ang_vel) >= 0.5:
+                    lin_vel = self.speed_normal - self.speed_delta*2
+                if abs(ang_vel) >= 0.7:
+                    lin_vel = self.speed_normal - self.speed_delta*3
+             
 
                 # local planner depending on laser scans
                 if self.warning_left or self.warning_frontleft:    
-                    lin_vel = 0.035  
+                    lin_vel = self.speed_normal*0.8
                     ang_vel = ang_vel - 0.3          
                     print("emergency steering: RIGHT")
                     
                     if len(self.d_frontleft) >= 1:
                         min_dist = min(self.d_frontleft)
                         if min_dist < self.d_treshold_frontsides - 0.07:
+                            lin_vel = 0.02 
                             ang_vel = ang_vel - 0.3          
                             print("emergency steering: RIGHT (EXTRA!!!!!!!!!)")
 
                 if self.warning_right or self.warning_frontright:
-                    lin_vel = 0.035
+                    lin_vel = self.speed_normal*0.8
                     ang_vel = ang_vel + 0.3
                     print("emergency steering: LEFT")
 
                     if len(self.d_frontright) >= 1:
                         min_dist = min(self.d_frontright)
                         if min_dist < self.d_treshold_frontsides - 0.07:
+                            lin_vel = 0.02 
                             ang_vel = ang_vel + 0.3          
                             print("emergency steering: LEFT (EXTRA!!!!!!!!!)")
+
 
                 '''
                 if self.warning_frontleft and self.warning_frontright:
@@ -354,11 +389,16 @@ class PathFollower():
                         break
 
                     # when close, reduce the look-ahead distance
-                    self.D = 0.15
-                    if self.dist_to_goal(state) < self.D*2:
-                        self.D = 0.15/2
+                    self.D = 0.13
+                    if self.dist_to_goal(state) < 0.35:
+                        self.D = 0.13*0.7
                         self.is_close = True
                         #print("close to target: reduce look-ahead")
+
+                    if self.dist_to_goal(state) < 0.50:
+                        if self.send_flag_OK:
+                            self.send_flag_close_to_obj("CLOSE_TO_TARGET")
+                            self.send_flag_OK = False
 
                     # default command: stay still
                     lin_vel = 0
@@ -370,13 +410,15 @@ class PathFollower():
                     # overang_veleeded (e.g. in a sharp turn)
                     lin_vel, ang_vel = self.override_velocities(ang_vel, alpha, state)
 
-                    print(ang_vel*0.3)
+                    #print(ang_vel*0.3)
                     # send the velocity commands
-                    self.send_velocity(lin_vel, ang_vel*0.3)
+                    print("lin", lin_vel)
+                    self.send_velocity(lin_vel, ang_vel*0.22)
 
                     rate.sleep()
 
                     # animation below
+                    '''
                     x.append(self.x_odom)
                     y.append(self.y_odom)
                     yaw.append(self.theta_odom)
@@ -390,17 +432,19 @@ class PathFollower():
                         plt.axis("equal")
                         plt.grid(True)
                         plt.pause(0.001)
-
+                    '''
 
                # print("PATH FOLLOWING DONE")
 
                 # path follower done
+                self.send_velocity(0, 0)
+
                 time.sleep(2)
 
                 # send a flag to the state machine
-
                 if not self.abort_path_following:
                     self.send_flag("path_following_done")
+                    self.abort_path_following = False
                     print("PATH FOLLOWING: DONE")
                 else:
                     print ("PATH FOLLOWING: ABORTED")
@@ -414,6 +458,7 @@ if __name__ == '__main__':
     # publishers
     pub_path_following_VEL = rospy.Publisher('/keyboard/vel', geometry_msgs.msg.Twist, queue_size=1)
     pub_flag_done = rospy.Publisher('/flag_done', std_msgs.msg.String, queue_size=1)
+    pub_flag_path_follower = rospy.Publisher('/flag_path_follower', std_msgs.msg.String, queue_size=1)
 
     # subscribers
     #rospy.Subscriber("/robot_odom", Odometry, pf.odomCallback)
